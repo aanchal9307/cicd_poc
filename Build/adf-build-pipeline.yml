@@ -1,0 +1,79 @@
+# Sample YAML file to validate and export an ARM template into a build artifact
+# Requires a package.json file located in the target repository
+
+# Trigger a build, when a branch gets tagged with a version number. E.g.: v1.0.0
+trigger:
+  tags:
+    include:
+    - v*.*.*.*
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+# Set the build's name to the version being built. E.g.: v1.0.0 -> v1.0.0.1
+name: $(Build.SourceBranchName)$(Rev:.r)
+
+steps:
+# Installs Node and the npm packages saved in your package.json file in the build
+- task: NodeTool@0
+  inputs:
+    versionSpec: '10.x'
+  displayName: 'Install Node.js'
+
+- task: Npm@1
+  inputs:
+    command: 'install'
+    workingDir: '$(Build.Repository.LocalPath)/Build' # Folder containing the "package.json" config file.
+    verbose: true
+  displayName: 'Install npm package'
+
+# Validates all of the Data Factory resources in the repository. You'll get the same validation errors as when "Validate All" is selected.
+# Enter the appropriate subscription and name for the source factory.
+- task: Npm@1
+  inputs:
+    command: 'custom'
+    workingDir: '$(Build.Repository.LocalPath)/Build' # Folder containing the "package.json" config file.
+    customCommand: 'run build validate $(Build.Repository.LocalPath)/ADF $(adfResourceId)'
+  displayName: 'Validate All'
+
+# Validate and then generate the ARM template into the destination folder, which is the same as selecting "Publish" from the UX.
+# This creates an "Artifact", which can be deployed to various environments, using a CI/CD pipeline. 
+- task: Npm@1
+  inputs:
+    command: 'custom'
+    workingDir: '$(Build.Repository.LocalPath)/Build' # Folder containing the "package.json" config file.
+    customCommand: 'run build export $(Build.Repository.LocalPath)/ADF $(adfResourceId) "Artifact/AdfArmTemplate"'
+  displayName: 'Publish (Generate ARM Templates)'
+
+
+# Copy the PowerShell Scripts from the Repo to the output folder containing the ARM Templates, to be included in the Artifact.
+# These scripts are needed to automate small tasks during Deployment.
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: '$(Build.Repository.LocalPath)/Build/Scripts'
+    contents: '*.ps1' 
+    targetFolder: '$(Build.Repository.LocalPath)/Build/Artifact/Scripts'
+    overWrite: true
+  displayName: 'Copy PowerShell Scripts'
+
+# Copy the EnvironmentParameters from the repo to the output folder containing the ARM Templates.
+# These are needed in the Release Pipeline.
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: '$(Build.Repository.LocalPath)/Build/EnvironmentParameters'
+    contents: '*.json'
+    targetFolder: '$(Build.Repository.LocalPath)/Build/Artifact/EnvironmentParameters'
+    overWrite: true
+  displayName: 'Copy Environment Parameters (ARM Templates)'
+
+# Publish the artifact to be used as a source for a release pipeline.
+# It contains the following:
+#   + ARM Templates of ADF
+#   + PowerShell Scripts to automate small tasks
+#   + Environment-specific Parameters
+- task: PublishPipelineArtifact@1
+  inputs:
+    targetPath: '$(Build.Repository.LocalPath)/Build/Artifact'
+    artifact: '_AdfArtifact'
+    publishLocation: 'pipeline'
+  displayName: 'Build Artifact'
